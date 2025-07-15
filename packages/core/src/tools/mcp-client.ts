@@ -18,7 +18,7 @@ import {
 import { parse } from 'shell-quote';
 import { MCPServerConfig } from '../config/config.js';
 import { DiscoveredMCPTool } from './mcp-tool.js';
-import { FunctionDeclaration, Type, mcpToTool } from '@google/genai';
+import { FunctionDeclaration, Type, mcpToTool, Schema } from '@google/genai';
 import { sanitizeParameters, ToolRegistry } from './tool-registry.js';
 
 export const MCP_DEFAULT_TIMEOUT_MSEC = 10 * 60 * 1000; // default to 10 minutes
@@ -261,7 +261,14 @@ export async function discoverTools(
 
       const toolNameForModel = generateValidName(funcDecl, mcpServerName);
 
-      sanitizeParameters(funcDecl.parameters);
+      const parameters = processJsonSchema(
+        (funcDecl.parametersJsonSchema ?? {
+          type: 'object',
+          properties: {},
+        }) as Record<string, unknown>,
+      );
+
+      sanitizeParameters(parameters);
 
       discoveredTools.push(
         new DiscoveredMCPTool(
@@ -269,7 +276,7 @@ export async function discoverTools(
           mcpServerName,
           toolNameForModel,
           funcDecl.description ?? '',
-          funcDecl.parameters ?? { type: Type.OBJECT, properties: {} },
+          parameters,
           funcDecl.name!,
           mcpServerConfig.timeout ?? MCP_DEFAULT_TIMEOUT_MSEC,
           mcpServerConfig.trust,
@@ -456,4 +463,166 @@ export function isEnabled(
       (tool) => tool === funcDecl.name || tool.startsWith(`${funcDecl.name}(`),
     )
   );
+}
+
+//from: https://github.com/googleapis/js-genai/blob/v1.9.0/src/_transformers.ts#L293-L420
+export function processJsonSchema(
+  _jsonSchema: Schema | Record<string, unknown>,
+): Schema {
+  const genAISchema: Schema = {};
+  const schemaFieldNames = ['items'];
+  const listSchemaFieldNames = ['anyOf'];
+  const dictSchemaFieldNames = ['properties'];
+
+  if (_jsonSchema['type'] && _jsonSchema['anyOf']) {
+    throw new Error('type and anyOf cannot be both populated.');
+  }
+
+  /*
+  This is to handle the nullable array or object. The _jsonSchema will
+  be in the format of {anyOf: [{type: 'null'}, {type: 'object'}]}. The
+  logic is to check if anyOf has 2 elements and one of the element is null,
+  if so, the anyOf field is unnecessary, so we need to get rid of the anyOf
+  field and make the schema nullable. Then use the other element as the new
+  _jsonSchema for processing. This is because the backend doesn't have a null
+  type.
+  This has to be checked before we process any other fields.
+  For example:
+    const objectNullable = z.object({
+      nullableArray: z.array(z.string()).nullable(),
+    });
+  Will have the raw _jsonSchema as:
+  {
+    type: 'OBJECT',
+    properties: {
+        nullableArray: {
+           anyOf: [
+              {type: 'null'},
+              {
+                type: 'array',
+                items: {type: 'string'},
+              },
+            ],
+        }
+    },
+    required: [ 'nullableArray' ],
+  }
+  Will result in following schema compatible with Gemini API:
+    {
+      type: 'OBJECT',
+      properties: {
+         nullableArray: {
+            nullable: true,
+            type: 'ARRAY',
+            items: {type: 'string'},
+         }
+      },
+      required: [ 'nullableArray' ],
+    }
+  */
+  const incomingAnyOf = _jsonSchema['anyOf'] as Array<Record<string, unknown>>;
+  if (incomingAnyOf != null && incomingAnyOf.length === 2) {
+    if (incomingAnyOf[0]!['type'] === 'null') {
+      genAISchema['nullable'] = true;
+      _jsonSchema = incomingAnyOf![1];
+    } else if (incomingAnyOf[1]!['type'] === 'null') {
+      genAISchema['nullable'] = true;
+      _jsonSchema = incomingAnyOf![0];
+    }
+  }
+
+  if (_jsonSchema['type'] instanceof Array) {
+    flattenTypeArrayToAnyOf(_jsonSchema['type'], genAISchema);
+  }
+
+  for (const [fieldName, fieldValue] of Object.entries(_jsonSchema)) {
+    // Skip if the fieldvalue is undefined or null.
+    if (fieldValue === null || fieldValue === undefined) {
+      continue;
+    }
+
+    if (fieldName === 'type') {
+      if (fieldValue === 'null') {
+        throw new Error(
+          'type: null can not be the only possible type for the field.',
+        );
+      }
+      if (fieldValue instanceof Array) {
+        // we have already handled the type field with array of types in the
+        // beginning of this function.
+        continue;
+      }
+      genAISchema['type'] = Object.values(Type).includes(
+        fieldValue.toUpperCase() as Type,
+      )
+        ? fieldValue.toUpperCase()
+        : Type.TYPE_UNSPECIFIED;
+    } else if (schemaFieldNames.includes(fieldName)) {
+      (genAISchema as Record<string, unknown>)[fieldName] =
+        processJsonSchema(fieldValue);
+    } else if (listSchemaFieldNames.includes(fieldName)) {
+      const listSchemaFieldValue: Schema[] = [];
+      for (const item of fieldValue) {
+        if (item['type'] === 'null') {
+          genAISchema['nullable'] = true;
+          continue;
+        }
+        listSchemaFieldValue.push(
+          processJsonSchema(item as Record<string, unknown>),
+        );
+      }
+      (genAISchema as Record<string, unknown>)[fieldName] =
+        listSchemaFieldValue;
+    } else if (dictSchemaFieldNames.includes(fieldName)) {
+      const dictSchemaFieldValue: Record<string, Schema> = {};
+      for (const [key, value] of Object.entries(
+        fieldValue as Record<string, unknown>,
+      )) {
+        dictSchemaFieldValue[key] = processJsonSchema(
+          value as Record<string, unknown>,
+        );
+      }
+      (genAISchema as Record<string, unknown>)[fieldName] =
+        dictSchemaFieldValue;
+    } else {
+      // additionalProperties is not included in JSONSchema, skipping it.
+      if (fieldName === 'additionalProperties') {
+        continue;
+      }
+      (genAISchema as Record<string, unknown>)[fieldName] = fieldValue;
+    }
+  }
+  return genAISchema;
+}
+
+//from: https://github.com/googleapis/js-genai/blob/v1.9.0/src/_transformers.ts#L257-L291
+/*
+Transform the type field from an array of types to an array of anyOf fields.
+Example:
+  {type: ['STRING', 'NUMBER']}
+will be transformed to
+  {anyOf: [{type: 'STRING'}, {type: 'NUMBER'}]}
+*/
+function flattenTypeArrayToAnyOf(typeList: string[], resultingSchema: Schema) {
+  if (typeList.includes('null')) {
+    resultingSchema['nullable'] = true;
+  }
+  const listWithoutNull = typeList.filter((type) => type !== 'null');
+
+  if (listWithoutNull.length === 1) {
+    resultingSchema['type'] = Object.values(Type).includes(
+      listWithoutNull[0].toUpperCase() as Type,
+    )
+      ? (listWithoutNull[0].toUpperCase() as Type)
+      : Type.TYPE_UNSPECIFIED;
+  } else {
+    resultingSchema['anyOf'] = [];
+    for (const i of listWithoutNull) {
+      resultingSchema['anyOf'].push({
+        type: Object.values(Type).includes(i.toUpperCase() as Type)
+          ? (i.toUpperCase() as Type)
+          : Type.TYPE_UNSPECIFIED,
+      });
+    }
+  }
 }

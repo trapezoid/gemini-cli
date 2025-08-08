@@ -369,6 +369,9 @@ export async function loadCliConfig(
   );
 
   let mcpServers = mergeMcpServers(settings, activeExtensions);
+  
+  const coreTools = mergeCoreTools(settings, activeExtensions);
+
   const question = argv.promptInteractive || argv.prompt || '';
   const approvalMode =
     argv.yolo || false ? ApprovalMode.YOLO : ApprovalMode.DEFAULT;
@@ -385,6 +388,7 @@ export async function loadCliConfig(
     activeExtensions,
     extraExcludes,
   );
+
   const blockedMcpServers: Array<{ name: string; extensionName: string }> = [];
 
   if (!argv.allowedMcpServerNames) {
@@ -429,7 +433,7 @@ export async function loadCliConfig(
     debugMode,
     question,
     fullContext: argv.allFiles || argv.all_files || false,
-    coreTools: settings.coreTools || undefined,
+    coreTools,
     excludeTools,
     toolDiscoveryCommand: settings.toolDiscoveryCommand,
     toolCallCommand: settings.toolCallCommand,
@@ -558,4 +562,22 @@ function mergeExcludeTools(
     }
   }
   return [...allExcludeTools];
+}
+
+function mergeCoreTools(
+  settings: Settings,
+  extensions: Extension[],
+): string[] | undefined {
+  const allCoreTools = new Set(settings.coreTools || []);
+  for (const extension of extensions) {
+    for (const tool of extension.config.coreTools || []) {
+      allCoreTools.add(tool);
+    }
+  }
+
+  if (allCoreTools.size === 0) {
+    return undefined;
+  }
+
+  return [...allCoreTools];
 }

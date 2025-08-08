@@ -607,15 +607,19 @@ function mergeCoreTools(
   settings: Settings,
   extensions: Extension[],
 ): string[] | undefined {
+  const isConfigured =
+    settings.coreTools !== undefined ||
+    extensions.some((e) => e.config.coreTools !== undefined);
+
+  if (!isConfigured) {
+    return undefined;
+  }
+  
   const allCoreTools = new Set(settings.coreTools || []);
   for (const extension of extensions) {
     for (const tool of extension.config.coreTools || []) {
       allCoreTools.add(tool);
     }
-  }
-
-  if (allCoreTools.size === 0) {
-    return undefined;
   }
 
   return [...allCoreTools];

@@ -614,11 +614,19 @@ function mergeCoreTools(
   if (!isConfigured) {
     return undefined;
   }
-  
+
   const allCoreTools = new Set(settings.coreTools || []);
   for (const extension of extensions) {
-    for (const tool of extension.config.coreTools || []) {
-      allCoreTools.add(tool);
+    if (extension.config.coreTools) {
+      if (Array.isArray(extension.config.coreTools)) {
+        for (const tool of extension.config.coreTools) {
+          allCoreTools.add(tool);
+        }
+      } else {
+        logger.warn(
+          `Extension "${extension.config.name}" has a non-array value for coreTools. Skipping.`,
+        );
+      }
     }
   }
 

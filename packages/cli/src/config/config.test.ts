@@ -760,6 +760,209 @@ describe('mergeExcludeTools', () => {
   });
 });
 
+describe('mergeCoreTools', () => {
+  it('should return undefined when no coreTools are configured', async () => {
+    const settings: Settings = {};
+    const extensions: Extension[] = [];
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      settings,
+      extensions,
+      'test-session',
+      argv,
+    );
+    expect(config.getCoreTools()).toBeUndefined();
+  });
+
+  it('should return coreTools from settings when no extensions are present', async () => {
+    const settings: Settings = { coreTools: ['tool1', 'tool2'] };
+    const extensions: Extension[] = [];
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      settings,
+      extensions,
+      'test-session',
+      argv,
+    );
+    expect(config.getCoreTools()).toEqual(['tool1', 'tool2']);
+  });
+
+  it('should return coreTools from a single extension when settings are empty', async () => {
+    const settings: Settings = {};
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          coreTools: ['tool1', 'tool2'],
+        },
+        contextFiles: [],
+      },
+    ];
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      settings,
+      extensions,
+      'test-session',
+      argv,
+    );
+    expect(config.getCoreTools()).toEqual(['tool1', 'tool2']);
+  });
+
+  it('should merge coreTools from multiple extensions', async () => {
+    const settings: Settings = {};
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          coreTools: ['tool1', 'tool2'],
+        },
+        contextFiles: [],
+      },
+      {
+        config: {
+          name: 'ext2',
+          version: '1.0.0',
+          coreTools: ['tool3', 'tool4'],
+        },
+        contextFiles: [],
+      },
+    ];
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      settings,
+      extensions,
+      'test-session',
+      argv,
+    );
+    expect(config.getCoreTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2', 'tool3', 'tool4']),
+    );
+    expect(config.getCoreTools()).toHaveLength(4);
+  });
+
+  it('should merge coreTools from settings and extensions with no overlap', async () => {
+    const settings: Settings = { coreTools: ['tool1', 'tool2'] };
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          coreTools: ['tool3', 'tool4'],
+        },
+        contextFiles: [],
+      },
+    ];
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      settings,
+      extensions,
+      'test-session',
+      argv,
+    );
+    expect(config.getCoreTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2', 'tool3', 'tool4']),
+    );
+    expect(config.getCoreTools()).toHaveLength(4);
+  });
+
+  it('should merge coreTools from settings and extensions with overlap', async () => {
+    const settings: Settings = { coreTools: ['tool1', 'tool2'] };
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          coreTools: ['tool2', 'tool3'],
+        },
+        contextFiles: [],
+      },
+    ];
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      settings,
+      extensions,
+      'test-session',
+      argv,
+    );
+    expect(config.getCoreTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2', 'tool3']),
+    );
+    expect(config.getCoreTools()).toHaveLength(3);
+  });
+
+  it('should handle empty coreTools arrays correctly', async () => {
+    const settings: Settings = { coreTools: [] };
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          coreTools: [],
+        },
+        contextFiles: [],
+      },
+    ];
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      settings,
+      extensions,
+      'test-session',
+      argv,
+    );
+    expect(config.getCoreTools()).toHaveLength(0);
+  });
+
+  it('should handle a mix of populated and empty/undefined coreTools arrays', async () => {
+    const settings: Settings = { coreTools: ['tool1'] };
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'ext1',
+          version: '1.0.0',
+          coreTools: ['tool2'],
+        },
+        contextFiles: [],
+      },
+      {
+        config: {
+          name: 'ext2',
+          version: '1.0.0',
+          coreTools: [],
+        },
+        contextFiles: [],
+      },
+      {
+        config: {
+          name: 'ext3',
+          version: '1.0.0',
+        },
+        contextFiles: [],
+      },
+    ];
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      settings,
+      extensions,
+      'test-session',
+      argv,
+    );
+    expect(config.getCoreTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2']),
+    );
+    expect(config.getCoreTools()).toHaveLength(2);
+  });
+});
+
 describe('loadCliConfig with allowed-mcp-server-names', () => {
   const originalArgv = process.argv;
   const originalEnv = { ...process.env };

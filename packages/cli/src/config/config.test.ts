@@ -961,6 +961,52 @@ describe('mergeCoreTools', () => {
     );
     expect(config.getCoreTools()).toHaveLength(2);
   });
+
+  it('should warn and skip when coreTools in an extension is not an array', async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, 'warn')
+      .mockImplementation(() => {});
+
+    const settings: Settings = { coreTools: ['tool1'] };
+    const extensions: Extension[] = [
+      {
+        config: {
+          name: 'bad-ext',
+          version: '1.0.0',
+          coreTools: 'not-an-array' as any,
+        },
+        contextFiles: [],
+      },
+      {
+        config: {
+          name: 'good-ext',
+          version: '1.0.0',
+          coreTools: ['tool2'],
+        },
+        contextFiles: [],
+      },
+    ];
+    process.argv = ['node', 'script.js'];
+    const argv = await parseArguments();
+    const config = await loadCliConfig(
+      settings,
+      extensions,
+      'test-session',
+      argv,
+    );
+
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      '[WARN]',
+      'Extension "bad-ext" has a non-array value for coreTools. Skipping.',
+    );
+    expect(config.getCoreTools()).toEqual(
+      expect.arrayContaining(['tool1', 'tool2']),
+    );
+    expect(config.getCoreTools()).not.toContain('not-an-array');
+    expect(config.getCoreTools()).toHaveLength(2);
+
+    consoleWarnSpy.mockRestore();
+  });
 });
 
 describe('loadCliConfig with allowed-mcp-server-names', () => {

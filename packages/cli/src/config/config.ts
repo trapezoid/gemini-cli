@@ -615,7 +615,18 @@ function mergeCoreTools(
     return undefined;
   }
 
-  const allCoreTools = new Set(settings.coreTools || []);
+  const allCoreTools = new Set<string>();
+
+  if (settings.coreTools) {
+    if (Array.isArray(settings.coreTools)) {
+      for (const tool of settings.coreTools) {
+        allCoreTools.add(tool);
+      }
+    } else {
+      logger.warn('Settings has a non-array value for coreTools. Skipping.');
+    }
+  }
+
   for (const extension of extensions) {
     if (extension.config.coreTools) {
       if (Array.isArray(extension.config.coreTools)) {

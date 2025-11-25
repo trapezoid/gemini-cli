@@ -100,6 +100,7 @@ export class McpClient {
     private readonly promptRegistry: PromptRegistry,
     private readonly workspaceContext: WorkspaceContext,
     private readonly debugMode: boolean,
+    private readonly cliConfig: Config,
   ) {}
 
   /**
@@ -132,6 +133,15 @@ export class McpClient {
         );
         this.updateStatus(MCPServerStatus.DISCONNECTED);
       };
+      this.client.setNotificationHandler(
+        'notifications/tools/list_changed',
+        async () => {
+          debugLogger.log(
+            `Received 'notifications/tools/list_changed' for ${this.serverName}.`,
+          );
+          await this.rediscoverTools(this.cliConfig);
+        },
+      );
       this.updateStatus(MCPServerStatus.CONNECTED);
     } catch (error) {
       this.updateStatus(MCPServerStatus.DISCONNECTED);
@@ -151,6 +161,22 @@ export class McpClient {
     if (prompts.length === 0 && tools.length === 0) {
       throw new Error('No prompts or tools found on the server.');
     }
+
+    for (const tool of tools) {
+      this.toolRegistry.registerTool(tool);
+    }
+    this.toolRegistry.sortTools();
+  }
+
+  /**
+   * Re-discovers tools from the MCP server and updates the tool registry.
+   */
+  async rediscoverTools(cliConfig: Config): Promise<void> {
+    this.assertConnected();
+
+    const tools = await this.discoverTools(cliConfig);
+
+    this.toolRegistry.removeMcpToolsByServer(this.serverName);
 
     for (const tool of tools) {
       this.toolRegistry.registerTool(tool);
@@ -943,6 +969,9 @@ export async function connectToMcpServer(
 
   mcpClient.registerCapabilities({
     roots: {
+      listChanged: true,
+    },
+    tools: {
       listChanged: true,
     },
   });

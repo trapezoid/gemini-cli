@@ -70,6 +70,7 @@ describe('mcp-client', () => {
         getStatus: vi.fn(),
         registerCapabilities: vi.fn(),
         setRequestHandler: vi.fn(),
+        setNotificationHandler: vi.fn(),
         getServerCapabilities: vi.fn().mockReturnValue({ tools: {} }),
         listTools: vi.fn().mockResolvedValue({
           tools: [
@@ -124,6 +125,7 @@ describe('mcp-client', () => {
         getStatus: vi.fn(),
         registerCapabilities: vi.fn(),
         setRequestHandler: vi.fn(),
+        setNotificationHandler: vi.fn(),
         getServerCapabilities: vi.fn().mockReturnValue({ tools: {} }),
 
         listTools: vi.fn().mockResolvedValue({
@@ -189,6 +191,7 @@ describe('mcp-client', () => {
         getStatus: vi.fn(),
         registerCapabilities: vi.fn(),
         setRequestHandler: vi.fn(),
+        setNotificationHandler: vi.fn(),
         getServerCapabilities: vi.fn().mockReturnValue({ prompts: {} }),
         listTools: vi.fn().mockResolvedValue({ tools: [] }),
         listPrompts: vi.fn().mockRejectedValue(new Error('Test error')),
@@ -233,6 +236,7 @@ describe('mcp-client', () => {
         getStatus: vi.fn(),
         registerCapabilities: vi.fn(),
         setRequestHandler: vi.fn(),
+        setNotificationHandler: vi.fn(),
         getServerCapabilities: vi.fn().mockReturnValue({ prompts: {} }),
         listPrompts: vi.fn().mockResolvedValue({ prompts: [] }),
         request: vi.fn().mockResolvedValue({}),
@@ -272,6 +276,7 @@ describe('mcp-client', () => {
         getStatus: vi.fn(),
         registerCapabilities: vi.fn(),
         setRequestHandler: vi.fn(),
+        setNotificationHandler: vi.fn(),
         getServerCapabilities: vi.fn().mockReturnValue({ tools: {} }),
         listTools: vi.fn().mockResolvedValue({
           tools: [
@@ -319,6 +324,7 @@ describe('mcp-client', () => {
         getStatus: vi.fn(),
         registerCapabilities: vi.fn(),
         setRequestHandler: vi.fn(),
+        setNotificationHandler: vi.fn(),
         getServerCapabilities: vi.fn().mockReturnValue({ tools: {} }),
         listTools: vi.fn().mockResolvedValue({
           tools: [
@@ -396,6 +402,7 @@ describe('mcp-client', () => {
         getStatus: vi.fn(),
         registerCapabilities: vi.fn(),
         setRequestHandler: vi.fn(),
+        setNotificationHandler: vi.fn(),
         getServerCapabilities: vi
           .fn()
           .mockReturnValue({ tools: {}, prompts: {} }),
@@ -452,6 +459,75 @@ describe('mcp-client', () => {
       expect(mockedClient.close).toHaveBeenCalledOnce();
       expect(mockedToolRegistry.removeMcpToolsByServer).toHaveBeenCalledOnce();
       expect(mockedPromptRegistry.removePromptsByServer).toHaveBeenCalledOnce();
+    });
+
+    it('should rediscover tools on notification', async () => {
+      const notificationHandler = vi.fn();
+      const mockedClient = {
+        connect: vi.fn(),
+        close: vi.fn(),
+        getStatus: vi.fn(),
+        registerCapabilities: vi.fn(),
+        setRequestHandler: vi.fn(),
+        setNotificationHandler: notificationHandler,
+        getServerCapabilities: vi
+          .fn()
+          .mockReturnValue({ tools: {}, prompts: {} }),
+        listPrompts: vi.fn().mockResolvedValue({
+          prompts: [],
+        }),
+        request: vi.fn().mockResolvedValue({}),
+        listTools: vi.fn().mockResolvedValue({
+          tools: [
+            {
+              name: 'testTool',
+              description: 'A test tool',
+              inputSchema: { type: 'object', properties: {} },
+            },
+          ],
+        }),
+      };
+      vi.mocked(ClientLib.Client).mockReturnValue(
+        mockedClient as unknown as ClientLib.Client,
+      );
+      vi.spyOn(SdkClientStdioLib, 'StdioClientTransport').mockReturnValue(
+        {} as SdkClientStdioLib.StdioClientTransport,
+      );
+      const mockedToolRegistry = {
+        registerTool: vi.fn(),
+        unregisterTool: vi.fn(),
+        getMessageBus: vi.fn().mockReturnValue(undefined),
+        removeMcpToolsByServer: vi.fn(),
+        sortTools: vi.fn(),
+      } as unknown as ToolRegistry;
+      const mockedPromptRegistry = {
+        registerPrompt: vi.fn(),
+        unregisterPrompt: vi.fn(),
+        removePromptsByServer: vi.fn(),
+      } as unknown as PromptRegistry;
+      const client = new McpClient(
+        'test-server',
+        {
+          command: 'test-command',
+        },
+        mockedToolRegistry,
+        mockedPromptRegistry,
+        workspaceContext,
+        false,
+        {} as Config,
+      );
+      await client.connect();
+
+      // Trigger the notification
+      const notificationCallback = notificationHandler.mock.calls[0][1];
+      await notificationCallback();
+
+      expect(mockedToolRegistry.removeMcpToolsByServer).toHaveBeenCalledWith(
+        'test-server',
+      );
+      expect(mockedClient.listTools).toHaveBeenCalledWith({});
+      expect(mockedToolRegistry.registerTool).toHaveBeenCalledTimes(1);
+      expect(mockedToolRegistry.sortTools).toHaveBeenCalledTimes(1);
     });
   });
   describe('appendMcpServerCommand', () => {

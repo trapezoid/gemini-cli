@@ -183,6 +183,7 @@ export class McpClientManager {
           try {
             await client.connect();
             await client.discover(this.cliConfig);
+            client.listenToolsListChanges(this.cliConfig);
             this.eventEmitter?.emit('mcp-client-update', this.clients);
           } catch (error) {
             this.eventEmitter?.emit('mcp-client-update', this.clients);

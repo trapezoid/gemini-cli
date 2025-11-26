@@ -453,6 +453,175 @@ describe('mcp-client', () => {
       expect(mockedToolRegistry.removeMcpToolsByServer).toHaveBeenCalledOnce();
       expect(mockedPromptRegistry.removePromptsByServer).toHaveBeenCalledOnce();
     });
+
+    it('should rediscover tools on notification', async () => {
+      const notificationHandler = vi.fn();
+
+      // Mock listTools to return different tools before and after notification
+      let toolCallCount = 0;
+      const mockedClient = {
+        connect: vi.fn(),
+        close: vi.fn(),
+        getStatus: vi.fn(),
+        registerCapabilities: vi.fn(),
+        setRequestHandler: vi.fn(),
+        setNotificationHandler: notificationHandler,
+        removeNotificationHandler: vi.fn(),
+        getServerCapabilities: vi
+          .fn()
+          .mockReturnValue({ tools: { listChanged: true }, prompts: {} }),
+        listPrompts: vi.fn().mockResolvedValue({
+          prompts: [],
+        }),
+        request: vi.fn().mockResolvedValue({}),
+        listTools: vi.fn().mockImplementation(() => {
+          toolCallCount++;
+          if (toolCallCount === 1) {
+            // Initial tool list
+            return Promise.resolve({
+              tools: [
+                {
+                  name: 'initialTool',
+                  description: 'Initial tool',
+                  inputSchema: { type: 'object', properties: {} },
+                },
+              ],
+            });
+          } else {
+            // Updated tool list after notification
+            return Promise.resolve({
+              tools: [
+                {
+                  name: 'updatedTool',
+                  description: 'Updated tool',
+                  inputSchema: { type: 'object', properties: {} },
+                },
+                {
+                  name: 'newTool',
+                  description: 'New tool',
+                  inputSchema: { type: 'object', properties: {} },
+                },
+              ],
+            });
+          }
+        }),
+      };
+      vi.mocked(ClientLib.Client).mockReturnValue(
+        mockedClient as unknown as ClientLib.Client,
+      );
+      vi.spyOn(SdkClientStdioLib, 'StdioClientTransport').mockReturnValue(
+        {} as SdkClientStdioLib.StdioClientTransport,
+      );
+      const mockedToolRegistry = {
+        registerTool: vi.fn(),
+        unregisterTool: vi.fn(),
+        getMessageBus: vi.fn().mockReturnValue(undefined),
+        removeMcpToolsByServer: vi.fn(),
+        sortTools: vi.fn(),
+      } as unknown as ToolRegistry;
+      const mockedPromptRegistry = {
+        registerPrompt: vi.fn(),
+        unregisterPrompt: vi.fn(),
+        removePromptsByServer: vi.fn(),
+      } as unknown as PromptRegistry;
+      const client = new McpClient(
+        'test-server',
+        {
+          command: 'test-command',
+        },
+        mockedToolRegistry,
+        mockedPromptRegistry,
+        workspaceContext,
+        false,
+      );
+      await client.connect();
+
+      // Mock Config with getGeminiClient method
+      const mockConfig = {
+        getGeminiClient: vi.fn().mockReturnValue({
+          isInitialized: vi.fn().mockReturnValue(false),
+        }),
+      } as unknown as Config;
+
+      // Perform initial discovery to register the initial tool
+      await client.discover(mockConfig);
+      client.listenToolsListChanges(mockConfig);
+
+      expect(mockedToolRegistry.registerTool).toHaveBeenCalledTimes(1);
+      expect(mockedClient.listTools).toHaveBeenCalledTimes(1);
+
+      // Verify initial tool was registered
+      const initialCall = vi.mocked(mockedToolRegistry.registerTool).mock
+        .calls[0][0];
+      expect(initialCall.name).toBe('initialTool');
+
+      // Trigger the notification
+      const notificationCallback = notificationHandler.mock.calls[0][1];
+      await notificationCallback();
+
+      // Verify the old tools were removed
+      expect(mockedToolRegistry.removeMcpToolsByServer).toHaveBeenCalledWith(
+        'test-server',
+      );
+
+      // Verify listTools was called twice (initial discovery + notification)
+      expect(mockedClient.listTools).toHaveBeenCalledTimes(2);
+      expect(mockedClient.listTools).toHaveBeenCalledWith({});
+
+      // Verify new tools were registered (1 initial + 2 after notification = 3 total)
+      expect(mockedToolRegistry.registerTool).toHaveBeenCalledTimes(3);
+
+      // Verify the registered tool names after notification
+      const secondCall = vi.mocked(mockedToolRegistry.registerTool).mock
+        .calls[1][0];
+      const thirdCall = vi.mocked(mockedToolRegistry.registerTool).mock
+        .calls[2][0];
+      expect(secondCall.name).toBe('updatedTool');
+      expect(thirdCall.name).toBe('newTool');
+
+      expect(mockedToolRegistry.sortTools).toHaveBeenCalledTimes(2);
+    });
+
+    it('should not register notification handler if not supported', async () => {
+      const notificationHandler = vi.fn();
+      const mockedClient = {
+        connect: vi.fn(),
+        close: vi.fn(),
+        getStatus: vi.fn(),
+        registerCapabilities: vi.fn(),
+        setRequestHandler: vi.fn(),
+        setNotificationHandler: notificationHandler,
+        getServerCapabilities: vi.fn().mockReturnValue({
+          tools: { listChanged: false },
+          prompts: {},
+        }),
+        listPrompts: vi.fn().mockResolvedValue({
+          prompts: [],
+        }),
+        request: vi.fn().mockResolvedValue({}),
+        listTools: vi.fn().mockResolvedValue({
+          tools: [],
+        }),
+      };
+      vi.mocked(ClientLib.Client).mockReturnValue(
+        mockedClient as unknown as ClientLib.Client,
+      );
+      vi.spyOn(SdkClientStdioLib, 'StdioClientTransport').mockReturnValue(
+        {} as SdkClientStdioLib.StdioClientTransport,
+      );
+      const client = new McpClient(
+        'test-server',
+        {
+          command: 'test-command',
+        },
+        {} as ToolRegistry,
+        {} as PromptRegistry,
+        workspaceContext,
+        false,
+      );
+      await client.connect();
+      expect(notificationHandler).not.toHaveBeenCalled();
+    });
   });
   describe('appendMcpServerCommand', () => {
     it('should do nothing if no MCP servers or command are configured', () => {

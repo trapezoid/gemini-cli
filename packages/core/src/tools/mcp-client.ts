@@ -23,6 +23,7 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js';
 import {
   ListRootsRequestSchema,
+  ToolListChangedNotificationSchema,
   type Tool as McpTool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { parse } from 'shell-quote';
@@ -156,6 +157,45 @@ export class McpClient {
       this.toolRegistry.registerTool(tool);
     }
     this.toolRegistry.sortTools();
+  }
+
+  listenToolsListChanges(cliConfig: Config): void {
+    if (this.client?.getServerCapabilities()?.tools?.listChanged) {
+      this.client.removeNotificationHandler('notifications/tools/list_changed');
+      this.client.setNotificationHandler(
+        ToolListChangedNotificationSchema,
+        async () => {
+          debugLogger.log(
+            `Received 'notifications/tools/list_changed' for ${this.serverName}.`,
+          );
+          await this.rediscoverTools(cliConfig);
+        },
+      );
+    }
+  }
+
+  /**
+   * Re-discovers tools from the MCP server and updates the tool registry.
+   */
+  async rediscoverTools(cliConfig: Config): Promise<void> {
+    this.assertConnected();
+    mcpDiscoveryState = MCPDiscoveryState.IN_PROGRESS;
+    try {
+      const tools = await this.discoverTools(cliConfig);
+
+      this.toolRegistry.removeMcpToolsByServer(this.serverName);
+
+      for (const tool of tools) {
+        this.toolRegistry.registerTool(tool);
+      }
+      this.toolRegistry.sortTools();
+      const geminiClient = cliConfig.getGeminiClient();
+      if (geminiClient.isInitialized()) {
+        await geminiClient.setTools();
+      }
+    } finally {
+      mcpDiscoveryState = MCPDiscoveryState.COMPLETED;
+    }
   }
 
   /**
